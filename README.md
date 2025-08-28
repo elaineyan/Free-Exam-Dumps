@@ -38,13 +38,16 @@ The script is divided into several parts, each with a specific purpose:
 ### Import Libraries:
 
 ```python
-import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 ```
-- **requests:** For making HTTP requests.
+- **webdriver:** For launching a Chrome browser to load examtopics page.
 - **BeautifulSoup:** For parsing HTML content.
 - **re:** For regular expression operations.
 - **ThreadPoolExecutor:** For parallel execution of tasks.
@@ -56,9 +59,10 @@ from tqdm import tqdm
 ```python
 class Scraper:
     def __init__(self, provider):
-        self.session = requests.Session()
         self.provider = provider.lower()
         self.base_url = f"https://www.examtopics.com/discussions/{self.provider}/"
+        options = webdriver.ChromeOptions()
+        self.driver = webdriver.Chrome(options=options)
 ```
 - Initializes a session for making requests.
 - Sets the base URL based on the provided exam provider.
@@ -67,9 +71,17 @@ class Scraper:
 ```python
     def get_num_pages(self):
         try:
-            response = self.session.get(f"{self.base_url}")
-            soup = BeautifulSoup(response.content, "html.parser")
-            return int(soup.find("span", {"class": "discussion-list-page-indicator"}).find_all("strong")[1].text.strip())
+            self.driver.get(self.base_url)
+            # wait until the pagination indicator is present
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "discussion-list-page-indicator"))
+            )
+
+            soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            container = soup.find("span", {"class": "discussion-list-page-indicator"})
+            strong_tags = container.find_all("strong")
+
+            return int(strong_tags[1].text.strip())
         except Exception as e:
             print(f"Error fetching page count: {e}")
             return 0
@@ -80,12 +92,18 @@ class Scraper:
 ```python
     def fetch_page_links(self, page, search_string):
         try:
-            response = self.session.get(f"{self.base_url}{page}/")
-            soup = BeautifulSoup(response.content, "html.parser")
+            self.driver.get(f"{self.base_url}{page}/")
+
+            # wait until discussion links are loaded
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_all_elements_located((By.CLASS_NAME, "discussion-link"))
+            )
+
+            soup = BeautifulSoup(self.driver.page_source, "html.parser")
             discussions = soup.find_all("a", {"class": "discussion-link"})
             links = [
-                discussion["href"].replace("/discussions", "https://www.examtopics.com/discussions", 1)
-                for discussion in discussions if search_string in discussion.text
+                d["href"].replace("/discussions", "https://www.examtopics.com/discussions", 1)
+                for d in discussions if search_string in d.text
             ]
             return links
         except Exception as e:
